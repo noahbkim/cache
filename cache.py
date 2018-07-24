@@ -1,26 +1,42 @@
 import os
 import json
 import contextlib
-import collections
+import time
 import tempfile
+import atexit
 import logging
+from typing import Union, Callable, IO, Dict, Any, AnyStr
+from pathlib import Path
 from functools import wraps
-
-from . import meta
 
 
 logging.basicConfig(level=logging.DEBUG)
 
 
-class Files(metaclass=meta.Singleton):
+class Files:
     """Files access for the cache."""
 
-    _cwd = os.getcwd()
-    _directory = os.path.join(_cwd, "cache", "data")
-    _manifest = os.path.join(_cwd, "cache", "cache.json")
+    _root: Path
+    _data: Path
+    _manifest: Path
+
+    ROOT = "cache"
+    DATA = "data"
+    MANIFEST = "manifest.json"
+
+    def __init__(self, root: Path):
+        """Initialize a new file manager for a cache."""
+
+        self._root = root
+        self._data = self._root.joinpath(self.DATA)
+        self._manifest = self._root.joinpath(self.MANIFEST)
+
+    @property
+    def root(self):
+        return self._root
 
     @contextlib.contextmanager
-    def manifest(self, mode: str="r"):
+    def manifest(self, mode: str="r") -> IO:
         """Return the opened manifest file."""
 
         try:
@@ -28,82 +44,148 @@ class Files(metaclass=meta.Singleton):
                 yield file
         except FileNotFoundError:
             logging.debug("no manifest file found!")
-            os.makedirs(os.path.dirname(self._manifest))
-            if not os.path.exists(self._manifest):
-                with open(self._manifest, "w") as file:
-                    json.dump({}, file)
+            self._root.mkdir(parents=True, exist_ok=True)
+            with self._manifest.open(mode) as file:
+                json.dump({}, file)
             logging.debug("manifest created")
-            with open(self._manifest, mode) as file:
+            with self._manifest.open(mode) as file:
                 yield file
 
     @contextlib.contextmanager
-    def cache(self, name: str, mode: str="r"):
+    def data(self, name: str, mode: str="r") -> IO:
         """Return a file object from the cache."""
 
-        path = os.path.join(self._directory, name)
+        path = self._data.joinpath(name)
         try:
             with open(path, mode) as file:
                 yield file
         except FileNotFoundError:
             logging.debug("cache directory missing")
-            os.makedirs(self._directory, exist_ok=True)
+            self._data.mkdir(parents=True, exist_ok=True)
             with open(path, mode) as file:
                 yield file
 
-    def random(self):
+    def random(self) -> str:
         """Get a random unique file name in the cache directory."""
 
-        return os.path.basename(tempfile.mktemp(dir=self._directory, prefix=""))
+        return os.path.basename(tempfile.mktemp(dir=self._data, prefix=""))
 
 
-files = Files()
+class Entry:
+    """Entry in a manifest file."""
 
+    name: str
+    created: float
+    expiration: float
 
-class Manifest(metaclass=meta.Singleton):
-    """Manifest file wrapper."""
+    def __init__(self, name: str, created: float=None, expiration: float=None):
+        """Initialize a new entry with formed values."""
 
-    def get(self, key: str, default=None):
-        """Get a key from the manifest file."""
+        self.name = name
+        self.created = created or time.time()
+        self.expiration = expiration or 0
+
+    def dump(self) -> Dict[str, str]:
+        """Dump an entry to JSON."""
+
+        return {"name": self.name, "created": self.created, "expiration": self.expiration}
+
+    @classmethod
+    def load(cls, serialized: dict):
+        """Load a entry object from a dictionary."""
 
         try:
-            with files.manifest() as file:
+            name = serialized["name"]
+            created = float(serialized["created"])
+            expiration = float(serialized["expiration"])
+        except (KeyError, json.JSONDecodeError):
+            raise SyntaxError
+
+        return Entry(name, created, expiration)
+
+
+class Manifest:
+    """Manifest file wrapper."""
+
+    files: Files
+
+    def __init__(self, files: Files, sync: bool=True):
+        """Initialize a manifest with the cache file manager.
+
+        The sync argument allows the user to specify whether the
+        corresponding manifest file should be modified every time the
+        manifest object in memory is. If sync is turned off, the
+        manifest file is only modified at exit.
+        """
+
+        self._files = files
+        self._sync = sync
+        self._manifest = {}
+
+        if not self._sync:
+            self._open()
+
+    def _open(self):
+        """Read the manifest once if sync is disabled."""
+
+        self._manifest = self._read()
+        atexit.register(self._close)
+
+    def _close(self):
+        """Write and close the manifest file if sync is disabled"""
+
+        self._write(self._manifest)
+
+    def _read(self) -> dict:
+        """Read the manifest file."""
+
+        try:
+            with self.files.manifest() as file:
                 data = json.load(file)
-                return data.get(key, default)
         except json.JSONDecodeError:
             data = self.reset()
-            return data.get(key, default)  # Just in case something is added to base
+        return data
 
-    def set(self, key: str, value: str):
+    def _write(self, data: Dict[str, Entry]) -> dict:
+        """Write to the manifest file."""
+
+        with self.files.manifest("w") as file:
+            json.dump(data, file)
+        return data
+
+    def get(self, key: str) -> Union[Entry, None]:
+        """Get a key from the manifest file."""
+
+        result = (self._read() if self._sync else self._manifest).get(key)
+        if result is not None:
+            result = Entry.load(result)
+        return result
+
+    def set(self, key: str, entry: Entry) -> Entry:
         """Set a key in the manifest."""
 
-        with files.manifest() as file:
-            data = json.load(file)
-        data[key] = value
-        with files.manifest("w") as file:
-            json.dump(data, file, indent=2)
+        data = self._read() if self._sync else self._manifest
+        data[key] = entry.dump()
+        if self._sync:
+            self._write(data)
+        return entry
 
-    def pop(self, key: str):
-        """Remove a key and value from the manifet."""
+    def pop(self, key: str) -> Entry:
+        """Remove a key and value from the manifest."""
 
-        with files.manifest() as file:
-            data = json.load(file)
-        data.pop(key)
-        with files.manifest("w") as file:
-            json.dump(data, file, indent=2)
+        data = self._read() if self._sync else self._manifest
+        entry = Entry.load(data.pop(key))  # Maybe too heavy?
+        if self._sync:
+            self._write(data)
+        return entry
 
-    def reset(self):
+    def reset(self) -> Dict[str, Entry]:
         """Reset the manifest."""
 
-        base = {}
-        with files.manifest("w") as file:
-            json.dump(base, file, indent=2)
-        return base
+        return self._write({})
 
 
-manifest = Manifest()
-
-
-def call(obj, *args, **kwargs):
+def call(obj: Any, *args, **kwargs) -> Any:
     """Call and return result if possible, otherwise return."""
 
     try:
@@ -112,40 +194,67 @@ def call(obj, *args, **kwargs):
         return obj
 
 
-def qualify(func: collections.Callable):
+def qualify(func) -> str:
     """Qualify a function."""
 
     return ".".join((func.__module__, func.__qualname__))
 
 
-def _serialize(func, args):
+def _serialize(func, args: str):
     """Fully serialize a function."""
 
     return qualify(func) + "(" + args + ")"
 
 
-def write(data, file):
+def write(data: AnyStr, file: IO):
     file.write(data)
 
 
-def read(file):
+def read(file: IO):
     return file.read()
 
 
-class Cache(metaclass=meta.Singleton):
+StringOrStringCallable = Union[Callable[..., str], str]
+
+
+class Cache:
     """A cache object used to speed up access to resources."""
 
-    _cache = {}
+    def __init__(self, inside: Union[str, Path]=None, root: Union[str, Path]=None):
+        """Initialize a new cache.
+
+        The inside arguments specifies the directory in which the
+        cache directory should be accessed or created. The root
+        argument specifies the absolute location of cache directory.
+        Root takes precedence over inside in the event that a user
+        specifies both arguments, although this should not happen.
+        """
+
+        if type(inside) == str:
+            inside = Path(inside)
+        if type(root) == str:
+            root = Path(root)
+
+        # Check all permutations of inside and root
+        if inside is None and root is None:
+            inside = Path.cwd()
+        if inside and root is None:
+            root = inside.joinpath(Files.ROOT)
+
+        self._files = Files(root)
+        self._manifest = Manifest(self._files)
+        self._cache = {}
 
     def __call__(self,
-                 f=None,
-                 serialize=None,
-                 file=None,
-                 extension=None,
-                 store=None,
-                 retrieve=None,
-                 persist=True,
-                 binary=False):
+                 f: Callable=None,
+                 serialize: StringOrStringCallable=None,
+                 file: StringOrStringCallable=None,
+                 extension: StringOrStringCallable=None,
+                 store: Callable[[Any, IO], Any]=None,
+                 retrieve: Callable[[IO], Any]=None,
+                 persist: bool=True,
+                 expiration: float=None,
+                 binary: bool=False):
         """Decorate a function and cache the return.
 
         This object primarily acts as a decorator, so to provide that
@@ -187,12 +296,12 @@ class Cache(metaclass=meta.Singleton):
                     # Get a unique key from the function and arguments, check if in manifest
                     arguments = "" if serialize is None else call(serialize, *args, **kwargs)
                     key = _serialize(func, arguments)
-                    path = manifest.get(key)
+                    entry = self._manifest.get(key)
 
                     # If it is, get the data
-                    if path is not None:
+                    if entry is not None:
                         logging.debug("found path in manifest")
-                        data = self.retrieve(path, method=retrieve, binary=binary)
+                        data = self.retrieve(entry.name, method=retrieve, binary=binary)
                         if data is not None:
                             logging.debug("retrieved data correctly")
                             self._cache[func] = data
@@ -203,12 +312,12 @@ class Cache(metaclass=meta.Singleton):
                     # Otherwise, generate a new path with the provided file function
                     if file is not None:
                         path = call(file, *args, **kwargs) + (extension or "")
-                        manifest.set(key, path)
+                        self._manifest.set(key, Entry(path, expiration=expiration))
 
                     # Otherwise, generate a random file name
                     else:
-                        path = files.random() + (extension or "")
-                        manifest.set(key, path)
+                        path = self._files.random() + (extension or "")
+                        self._manifest.set(key, Entry(path, expiration=expiration))
 
                 self._cache[func] = result = func(*args, **kwargs)
 
@@ -229,7 +338,7 @@ class Cache(metaclass=meta.Singleton):
 
         method = method or read
         try:
-            with files.cache(name, "rb" if binary else "r") as file:
+            with self._files.data(name, "rb" if binary else "r") as file:
                 return method(file)
         except FileNotFoundError:
             return None
@@ -241,7 +350,7 @@ class Cache(metaclass=meta.Singleton):
         """Write data to a file in the cache."""
 
         method = method or write
-        with files.cache(name, "wb" if binary else "w") as file:
+        with self._files.data(name, "wb" if binary else "w") as file:
             method(data, file)
 
 
