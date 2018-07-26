@@ -3,7 +3,6 @@ import json
 import contextlib
 import time
 import tempfile
-import atexit
 import logging
 from typing import Union, Callable, IO, Dict, Any, AnyStr, Optional
 from pathlib import Path
