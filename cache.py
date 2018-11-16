@@ -4,6 +4,8 @@ import contextlib
 import time
 import tempfile
 import logging
+import atexit
+
 from typing import Union, Callable, IO, Dict, Any, AnyStr, Optional
 from pathlib import Path
 from functools import wraps
@@ -38,7 +40,7 @@ class Files:
         """Return the opened manifest file."""
 
         try:
-            with open(self._manifest, mode) as file:
+            with open(str(self._manifest), mode) as file:
                 yield file
         except FileNotFoundError:
             logging.debug("no manifest file found!")
@@ -55,18 +57,24 @@ class Files:
 
         path = self._data.joinpath(name)
         try:
-            with open(path, mode) as file:
+            with open(str(path), mode) as file:
                 yield file
         except FileNotFoundError:
             logging.debug("cache directory missing")
             self._data.mkdir(parents=True, exist_ok=True)
-            with open(path, mode) as file:
+            with open(str(path), mode) as file:
                 yield file
 
     def random(self) -> str:
         """Get a random unique file name in the cache directory."""
 
         return os.path.basename(tempfile.mktemp(dir=self._data, prefix=""))
+
+    def clear(self):
+        """Delete all associated files."""
+
+        import shutil
+        shutil.rmtree(str(self._root))
 
 
 class Entry:
@@ -118,57 +126,74 @@ class Manifest:
     _files: Files
     _manifest: Dict[str, Entry]
 
-    def __init__(self, files: Files):
-        """Initialize a manifest with the cache file manager."""
+    def __init__(self, files: Files, sync: bool=True):
+        """Initialize a manifest with the cache file manager.
+
+        The sync argument allows the user to specify whether the
+        corresponding manifest file should be modified every time the
+        manifest object in memory is. If sync is turned off, the
+        manifest file is only modified at exit.
+        """
 
         self._files = files
-        self._manifest = {}
+        self._manifest = None
 
-    def _read(self) -> dict:
+        self.sync = sync
+        if not self.sync:
+            atexit.register(self._write)
+
+    def _read(self):
         """Read the manifest file."""
 
+        self._manifest = {}
         try:
             with self._files.manifest() as file:
                 data = json.load(file)
         except json.JSONDecodeError:
-            data = self.reset()
-        return data
+            return
 
-    def _write(self, data: Dict[str, Entry]) -> dict:
+        for key, value in data.items():
+            self._manifest[key] = Entry.load(value)
+
+    def _write(self):
         """Write to the manifest file."""
 
         with self._files.manifest("w") as file:
-            json.dump(data, file)
-        return data
+            json.dump({k: v.dump() for k, v in self._manifest.items()}, file)
 
     def get(self, key: str) -> Optional[Entry]:
         """Get a key from the manifest file."""
 
-        result = self._read().get(key)
-        if result is not None:
-            result = Entry.load(result)
-        return result
+        if self.sync:
+            self._read()
+        return self._manifest.get(key)
 
     def set(self, key: str, entry: Entry) -> Entry:
         """Set a key in the manifest."""
 
-        data = self._read()
-        data[key] = entry.dump()
-        self._write(data)
+        if self.sync:
+            self._read()
+        self._manifest[key] = entry
+        if self.sync:
+            self._write()
         return entry
 
     def pop(self, key: str) -> Entry:
         """Remove a key and value from the manifest."""
 
-        data = self._read()
-        entry = Entry.load(data.pop(key))  # Maybe too heavy?
-        self._write(data)
+        if self.sync:
+            self._read()
+        entry = self._manifest.pop(key)  # Maybe too heavy?
+        if self.sync:
+            self._write()
         return entry
 
-    def reset(self) -> Dict[str, Entry]:
-        """Reset the manifest."""
+    def clear(self):
+        """Clear the manifest."""
 
-        return self._write({})
+        self._manifest = {}
+        if self.sync:
+            self._write()
 
 
 def call(obj: Any, *args, **kwargs) -> Any:
@@ -180,13 +205,13 @@ def call(obj: Any, *args, **kwargs) -> Any:
         return obj
 
 
-def qualify(func) -> str:
+def qualify(func: object) -> str:
     """Qualify a function."""
 
     return ".".join((func.__module__, func.__qualname__))
 
 
-def _serialize(func, args: str):
+def _serialize(func: object, args: str):
     """Fully serialize a function."""
 
     return qualify(func) + "(" + args + ")"
@@ -233,7 +258,7 @@ class Cache:
             root = inside.joinpath(Files.ROOT)
 
         self._files = Files(root)
-        self._manifest = Manifest(self._files)
+        self._manifest = Manifest(self._files, sync=sync)
         self._cache = {}
 
     def __call__(self,
@@ -327,8 +352,8 @@ class Cache:
                 if persist:
 
                     # Set a name for the entry and store it in the manifest
-                    name = call(file, *args, **kwargs) if file else self._files.random()
-                    entry.name = name + (extension or "")
+                    name = (call(file, *args, **kwargs) if file else self._files.random()) + (extension or "")
+                    entry.name = name
                     self._manifest.set(key, entry)
                     logging.debug("add to manifest")
 

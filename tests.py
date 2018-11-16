@@ -3,6 +3,9 @@ import json
 import shutil
 import time
 import os
+import sys
+
+sys.path.append(os.path.dirname(__file__))
 
 from cache import Cache
 from cache import logging
@@ -33,7 +36,7 @@ class CacheTest(unittest.TestCase):
 
         logging.info("clearing memory cache")
         cache._cache.clear()
-        cache._manifest.reset()
+        cache._manifest.clear()
 
     def test_memory_cache(self):
         """Check storing a function call in memory."""
