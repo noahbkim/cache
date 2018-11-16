@@ -30,7 +30,8 @@ def add(a: int, b: int) -> int:
 
 My approach to caching different results based on the arguments passed to the function is basically to push the work of serializing them onto the user.
 What's happening here is that internally, the key used to remember the function call is combined with the serialized arguments.
-In this case, `add(1, 2)` would be serialized as `"module.add(1, 2)"`.
+In this case, `add(1, 2)` would be serialized as `"module.add(2, 1)"`. 
+Note that we're messing around with commutativity of addition to increase cache efficiency.
 
 Caching in the file system is also available, and is enabled by default.
 This creates a cache directory and manifest file in the working directory, but the location of the file system can be configured in the `Cache` initialization.
