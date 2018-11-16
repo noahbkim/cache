@@ -11,8 +11,11 @@ from pathlib import Path
 from functools import wraps
 
 
+__all__ = ("Cache",)
+
+
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.FATAL,
     datefmt="%Y-%m-%d %h:%M:%S %p",
     format="%(asctime)s %(levelname)s: %(message)s")
 
@@ -24,7 +27,7 @@ class Files:
     _data: Path
     _manifest: Path
 
-    ROOT = "cache"
+    ROOT = "cached"
     DATA = "data"
     MANIFEST = "manifest.json"
 
