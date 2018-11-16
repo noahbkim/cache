@@ -21,7 +21,7 @@ However, every times after it will look into the cache instead of re-invoking th
 The cache module includes other useful functionality:
 
 ```python
-@cache(serialize=lambda a, b: f"{a}, {b}")
+@cache(serialize=lambda a, b: f"{max(a, b)}, {min(a, b)}")
 def add(a: int, b: int) -> int:
     """Cache unique values for different arguments."""
 
