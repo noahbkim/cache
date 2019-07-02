@@ -10,14 +10,15 @@ from typing import Union, Callable, IO, Dict, Any, AnyStr, Optional
 from pathlib import Path
 from functools import wraps
 
-
 __all__ = ("Cache",)
-
 
 logging.basicConfig(
     level=logging.FATAL,
     datefmt="%Y-%m-%d %h:%M:%S %p",
     format="%(asctime)s %(levelname)s: %(message)s")
+
+NONE = object()
+ClosedOptional = Any  # No good way to annotate
 
 
 class Files:
@@ -39,7 +40,7 @@ class Files:
         self._manifest = self._root.joinpath(self.MANIFEST)
 
     @contextlib.contextmanager
-    def manifest(self, mode: str="r") -> IO:
+    def manifest(self, mode: str = "r") -> IO:
         """Return the opened manifest file."""
 
         try:
@@ -55,7 +56,7 @@ class Files:
                 yield file
 
     @contextlib.contextmanager
-    def data(self, name: str, mode: str="r") -> IO:
+    def data(self, name: str, mode: str = "r") -> IO:
         """Return a file object from the cache."""
 
         path = self._data.joinpath(name)
@@ -83,12 +84,13 @@ class Files:
 class Entry:
     """Entry in a manifest file."""
 
-    name: str
-    data: Any
+    name: Optional[str]
+    expiration: Optional[float]
     created: float
-    expiration: float
 
-    def __init__(self, name: str=None, created: float=None, expiration: float=None, **kwargs):
+    data: ClosedOptional
+
+    def __init__(self, name: str = None, data: Any = NONE, expiration: float = None, created: float = None):
         """Initialize a new entry with formed values.
 
         We don't assign the data attribute on initialization because
@@ -97,12 +99,9 @@ class Entry:
         """
 
         self.name = name
+        self.data = data
+        self.expiration = expiration
         self.created = created or time.time()
-        self.expiration = expiration or 0
-
-        # Check this way so that None is a valid value
-        if "data" in kwargs:
-            self.data = kwargs.pop("data")
 
     def dump(self) -> Dict[str, str]:
         """Dump an entry to JSON."""
@@ -120,7 +119,7 @@ class Entry:
         except (KeyError, json.JSONDecodeError):
             raise SyntaxError
 
-        return Entry(name, created, expiration)
+        return Entry(name=name, expiration=expiration, created=created,)
 
 
 class Manifest:
@@ -129,7 +128,7 @@ class Manifest:
     _files: Files
     _manifest: Dict[str, Entry]
 
-    def __init__(self, files: Files, sync: bool=True):
+    def __init__(self, files: Files, sync: bool = True):
         """Initialize a manifest with the cache file manager.
 
         The sync argument allows the user to specify whether the
@@ -139,7 +138,8 @@ class Manifest:
         """
 
         self._files = files
-        self._manifest = None
+        self._manifest = {}
+        self._read()
 
         self.sync = sync
         if not self.sync:
@@ -148,7 +148,7 @@ class Manifest:
     def _read(self):
         """Read the manifest file."""
 
-        self._manifest = {}
+        self._manifest.clear()
         try:
             with self._files.manifest() as file:
                 data = json.load(file)
@@ -167,15 +167,11 @@ class Manifest:
     def get(self, key: str) -> Optional[Entry]:
         """Get a key from the manifest file."""
 
-        if self.sync:
-            self._read()
         return self._manifest.get(key)
 
     def set(self, key: str, entry: Entry) -> Entry:
         """Set a key in the manifest."""
 
-        if self.sync:
-            self._read()
         self._manifest[key] = entry
         if self.sync:
             self._write()
@@ -184,8 +180,6 @@ class Manifest:
     def pop(self, key: str) -> Entry:
         """Remove a key and value from the manifest."""
 
-        if self.sync:
-            self._read()
         entry = self._manifest.pop(key)  # Maybe too heavy?
         if self.sync:
             self._write()
@@ -234,7 +228,7 @@ StringOrStringCallable = Union[Callable[..., str], str]
 class Cache:
     """A cache object used to speed up access to resources."""
 
-    def __init__(self, inside: Union[str, Path]=None, root: Union[str, Path]=None, sync: bool=True):
+    def __init__(self, inside: Union[str, Path] = None, root: Union[str, Path] = None, sync: bool = True):
         """Initialize a new cache.
 
         The inside arguments specifies the directory in which the
@@ -265,16 +259,16 @@ class Cache:
         self._cache = {}
 
     def __call__(self,
-                 f: Callable=None,
+                 f: Callable = None,
                  *,
-                 serialize: StringOrStringCallable=None,
-                 file: StringOrStringCallable=None,
-                 extension: StringOrStringCallable=None,
-                 store: Callable[[Any, IO], Any]=None,
-                 retrieve: Callable[[IO], Any]=None,
-                 persist: bool=True,
-                 expiration: float=None,
-                 binary: bool=False) -> Callable:
+                 serialize: StringOrStringCallable = None,
+                 file: StringOrStringCallable = None,
+                 extension: StringOrStringCallable = None,
+                 store: Callable[[Any, IO], Any] = None,
+                 retrieve: Callable[[IO], Any] = None,
+                 persist: bool = True,
+                 expiration: float = None,
+                 binary: bool = False) -> Callable:
         """Decorate a function and cache the return.
 
         This object primarily acts as a decorator, so to provide that
@@ -327,13 +321,11 @@ class Cache:
                         logging.debug("found entry")
 
                         # Check if it has expired
-                        if entry.expiration == 0 or time.time() - entry.created < entry.expiration:
+                        if entry.expiration is None or time.time() - entry.created < entry.expiration:
 
                             # Try to get the data from the entry
-                            try:
+                            if entry.data != NONE:
                                 return entry.data
-                            except AttributeError:
-                                pass
 
                             # If we're persisting, check the file system
                             if persist:
@@ -372,14 +364,14 @@ class Cache:
             return decorator(f)
         return decorator
 
-    def retrieve(self, name: str, method=None, binary: bool=False) -> object:
+    def retrieve(self, name: str, method=None, binary: bool = False) -> object:
         """Read a file from the cache."""
 
         method = method or read
         with self._files.data(name, "rb" if binary else "r") as file:
             return method(file)
 
-    def store(self, name: str, data, method=None, binary: bool=False):
+    def store(self, name: str, data, method=None, binary: bool = False):
         """Write data to a file in the cache."""
 
         method = method or write
