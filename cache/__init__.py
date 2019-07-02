@@ -115,11 +115,11 @@ class Entry:
         try:
             name = serialized["name"]
             created = float(serialized["created"])
-            expiration = float(serialized["expiration"])
+            expiration = serialized["expiration"] and float(serialized["expiration"])
         except (KeyError, json.JSONDecodeError):
             raise SyntaxError
 
-        return Entry(name=name, expiration=expiration, created=created,)
+        return Entry(name=name, expiration=expiration, created=created)
 
 
 class Manifest:
