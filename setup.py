@@ -7,4 +7,4 @@ setup(name="cache",
       author="Noah Kim",
       author_email="noahbkim@gmail.com",
       packages=("cache",),
-      zip_safe=True)
+      zip_safe=False)
