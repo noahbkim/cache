@@ -219,9 +219,9 @@ class Cache:
         manifest file is only modified at exit.
         """
 
-        if type(inside) == str:
+        if inside is not None and not isinstance(inside, Path):
             inside = Path(inside)
-        if type(root) == str:
+        if root is not None and not isinstance(root, Path):
             root = Path(root)
 
         # Check all permutations of inside and root
@@ -329,7 +329,6 @@ class Cache:
                             if entry.data is not NONE:
                                 return entry.data
 
-                            logging.debug(entry)
                             # If we're persisting, check the file system
                             if persist:
                                 try:
