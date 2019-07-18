@@ -1,7 +1,7 @@
 from setuptools import setup
 
 setup(name="cache",
-      version="0.1",
+      version="0.2",
       description="An simple, general-purpose caching library for local development",
       url="https://github.com/noahbkim/cache",
       author="Noah Kim",

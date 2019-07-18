@@ -1,6 +1,5 @@
 import unittest
 import json
-import shutil
 import time
 import os
 import sys
@@ -86,7 +85,7 @@ class CacheTest(unittest.TestCase):
         logging.info("starting file name cache test")
         func = cache(persist=True, file=lambda argument: str(argument), extension=".txt")(data)
         func("hello")
-        assert os.path.exists(cache._files._data.joinpath("hello.txt"))
+        assert cache._files._data.joinpath("hello.txt").exists()
 
     @classmethod
     def test_store_retrieve(cls):

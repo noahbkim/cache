@@ -246,6 +246,7 @@ class Cache:
             extension: StringOrStringCallable = "",
             store: Callable[[Any, IO], Any] = utility.write,
             retrieve: Callable[[IO], Any] = utility.read,
+            flag: str = "reload",
             persist: bool = True,
             expiration: float = None,
             binary: bool = False) -> Callable:
@@ -265,6 +266,10 @@ class Cache:
         store(path, data) and retrieve(path) respectively, and will
         By default, a standard file write is used.
 
+        The flag argument adds a kwarg to check for to see whether
+        the data should be reloaded regardless of cache. It defaults
+        to reload, which in turn defaults to False.
+
         The expiration argument should be used to set the number of
         seconds before the function will be re-invoked.
 
@@ -278,6 +283,7 @@ class Cache:
         :parameter extension: cache file extension.
         :parameter store: method for writing an object to a file.
         :parameter retrieve: method for reading an object from a file.
+        :parameter flag: the boolean flag kwarg to invalidate.
         :parameter persist: whether to store in the file system.
         :parameter expiration: seconds to expiration.
         :parameter binary: whether to open the file in binary mode.
@@ -291,7 +297,7 @@ class Cache:
             """Return the configured decorator."""
 
             @wraps(func)
-            def wrapper(*args, reload: bool = False, **kwargs) -> Any:
+            def wrapper(*args, **kwargs) -> Any:
                 """Add options for memory and file system caching.
 
                 First check if the function object is in the memory
@@ -305,7 +311,7 @@ class Cache:
                 key = f"{utility.qualify(func)}({arguments})"
 
                 # Get the entry from memory of the manifest
-                if not reload:
+                if not kwargs.get(flag, False):
                     entry = None
                     if key in self._cache:
                         entry = self._cache[key]
@@ -390,7 +396,7 @@ class Cache:
         self._manifest.clear()
 
     def empty(self):
-        """Empty all files in the cache."""
+        """Clear and empty all files in the cache."""
 
         self.clear()
         self._files.empty()
