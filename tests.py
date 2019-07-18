@@ -31,14 +31,15 @@ cache = Cache()
 class CacheTest(unittest.TestCase):
     """Test all cache cases."""
 
-    def tearDown(self):
+    @classmethod
+    def tearDown(cls):
         """Clear the memory cache each time."""
 
         logging.info("clearing memory cache")
         cache._cache.clear()
-        cache._manifest.clear()
 
-    def test_memory_cache(self):
+    @classmethod
+    def test_memory_cache(cls):
         """Check storing a function call in memory."""
 
         logging.info("starting memory cache test")
@@ -46,7 +47,8 @@ class CacheTest(unittest.TestCase):
         result = func()
         assert func() == result  # The counter should change but the cached result should not
 
-    def test_persistent_cache(self):
+    @classmethod
+    def test_persistent_cache(cls):
         """Check storing a function call in a file."""
 
         logging.info("starting persistent cache test")
@@ -55,7 +57,8 @@ class CacheTest(unittest.TestCase):
         cache._cache.clear()
         assert func() == result
 
-    def test_memory_serialize_arguments(self):
+    @classmethod
+    def test_memory_serialize_arguments(cls):
         """Check custom functions for argument serialization."""
 
         logging.info("starting argument serialization test")
@@ -64,7 +67,8 @@ class CacheTest(unittest.TestCase):
         key = "tests.data({})".format(hash("Hello, world!"))
         assert cache._cache[key].data == result
 
-    def test_memory_expiration(self):
+    @classmethod
+    def test_memory_expiration(cls):
         """Test whether expiration works."""
 
         logging.info("starting expiration cache test")
@@ -75,7 +79,8 @@ class CacheTest(unittest.TestCase):
         time.sleep(1.5)
         assert func() != result
 
-    def test_persistent_file(self):
+    @classmethod
+    def test_persistent_file(cls):
         """Check if file names are stored correctly."""
 
         logging.info("starting file name cache test")
@@ -83,17 +88,21 @@ class CacheTest(unittest.TestCase):
         func("hello")
         assert os.path.exists(cache._files._data.joinpath("hello.txt"))
 
-    def test_store_retrieve(self):
+    @classmethod
+    def test_store_retrieve(cls):
         """Check the store and retrieve overrides."""
 
         logging.info("starting store and retrieve test")
-        func = cache(persist=True, store=json.dump, retrieve=json.load)(data)
+        func = cache(persist=True, store=json.dump, retrieve=json.load, extension=".json")(data)
         func({"number": 1})
         cache._cache.clear()
-        assert type(func()) == dict and func()["number"] == 1
+        cache._manifest.write()
+        cache._manifest._manifest.clear()
+        cache._manifest.read()
+        assert type(func({"number": 1})) == dict and func({"number": 1})["number"] == 1
 
     @classmethod
     def tearDownClass(cls):
         """Clean up after ourselves."""
 
-        shutil.rmtree(cache._files._root)
+        cache.empty()
