@@ -3,7 +3,6 @@ import json
 import contextlib
 import time
 import tempfile
-import logging
 import atexit
 import multiprocessing
 from dataclasses import dataclass
@@ -14,11 +13,6 @@ from functools import wraps
 from . import utility
 
 __all__ = ("Cache",)
-
-logging.basicConfig(
-    level=logging.DEBUG,
-    datefmt="%Y-%m-%d %h:%M:%S %p",
-    format="%(asctime)s %(levelname)s: %(message)s")
 
 NONE = object()
 
@@ -55,11 +49,9 @@ class Files:
             with open(str(self._manifest), mode) as file:
                 yield file
         except FileNotFoundError:
-            logging.debug("no manifest file found!")
             self._root.mkdir(parents=True, exist_ok=True)
             with self._manifest.open("w") as file:
                 json.dump({}, file)
-            logging.debug("manifest created")
             with self._manifest.open(mode) as file:
                 yield file
 
@@ -72,7 +64,6 @@ class Files:
             with open(str(path), mode) as file:
                 yield file
         except FileNotFoundError:
-            logging.debug("cache directory missing")
             self._data.mkdir(parents=True, exist_ok=True)
             with open(str(path), mode) as file:
                 yield file
@@ -155,14 +146,12 @@ class Manifest:
             with self._files.manifest() as file:
                 data = json.load(file)
         except json.JSONDecodeError:
-            logging.error("invalidly formatted manifest!")
             return
 
         for key, value in data.items():
             try:
                 self._manifest[key] = Entry.load(value)
             except (KeyError, json.JSONDecodeError):
-                logging.error("attempted to deserialize invalid entry!")
                 self._manifest.clear()
 
     def write(self):
@@ -320,7 +309,6 @@ class Cache:
 
                     # If it is, get the data
                     if entry is not None:
-                        logging.debug("found entry")
 
                         # Check if it has expired
                         if entry.expiration is None or time.time() - entry.created < entry.expiration:
@@ -333,18 +321,14 @@ class Cache:
                             if persist:
                                 try:
                                     entry.data = self.retrieve(entry.name, method=retrieve, binary=binary)
-                                except (FileNotFoundError, Exception) as e:
-                                    logging.debug("caught {} while retrieving data".format(e))
+                                except FileNotFoundError:
+                                    pass
                                 else:
                                     return entry.data
-
-                        else:
-                            logging.debug("data has expired")
 
                 # Set the result and add the entry to the cache
                 result = func(*args, **kwargs)
                 self._cache[key] = entry = Entry(expiration=expiration, data=result)
-                logging.debug("called function")
 
                 if persist:
 
@@ -356,11 +340,9 @@ class Cache:
 
                     entry.name = name
                     self._manifest.set(key, entry)
-                    logging.debug("add to manifest")
 
                     # Write to the file system
                     self.store(name, result, method=store, binary=binary)
-                    logging.debug("stored results")
 
                 return result
 
