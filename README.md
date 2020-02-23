@@ -1,7 +1,7 @@
 # Cache
 
 The cache module provides a convenient interface for dynamic memory and file-system caching.
-It has no dependencies and not installation process.
+It has no dependencies and therefore a minimal installation.
 To use it, simply instantiate a cache object and use it to decorate the functions whose results you wish to cache.
 Take a look at the following example:
 
